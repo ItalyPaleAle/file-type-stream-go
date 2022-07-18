@@ -201,14 +201,12 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 			}
 			read, err = buf.ReadBytes(30, &ReadBytesOpts{
 				Advance: true,
-				Offset:  4,
 			})
 			if err != nil {
 				return
 			}
-
-			// We reached EOF
 			if len(read) < 30 {
+				// We reached EOF
 				break
 			}
 
@@ -237,7 +235,11 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 			}
 
 			if strings.HasSuffix(filename, ".rels") || strings.HasSuffix(filename, ".xml") {
-				switch filename[0:strings.IndexByte(filename, '/')] {
+				check := filename
+				if idx := strings.IndexByte(filename, '/'); idx > -1 {
+					check = filename[0:idx]
+				}
+				switch check {
 				case "word":
 					ext = "docx"
 					mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -272,7 +274,7 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 			// - one entry indicating specific type of file.
 			// MS Office, OpenOffice and LibreOffice may put the parts in different order, so the check should not rely on it.
 			if filename == "mimetype" && compressedSize == uncompressedSize {
-				read, err = buf.ReadBytes(int(compressedSize), nil)
+				read, err = buf.ReadBytes(int(compressedSize), advanceReadBytesOpts)
 				if err != nil {
 					return
 				}
@@ -301,9 +303,12 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 			if compressedSize == 0 {
 				nextHeaderIndex := -1
 				for nextHeaderIndex < 0 {
-					read, err = buf.ReadBytes(4000, advanceReadBytesOpts)
-					if err != nil || (len(read) == 0 && buf.eof) {
+					read, err = buf.ReadBytes(4000, nil)
+					if err != nil {
 						return
+					}
+					if len(read) == 0 && buf.eof {
+						break
 					}
 					nextHeaderIndex = bytes.Index(read, []byte{0x50, 0x4B, 0x03, 0x04})
 					if nextHeaderIndex > 0 {
