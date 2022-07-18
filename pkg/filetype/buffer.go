@@ -36,6 +36,11 @@ type ReadBytesOpts struct {
 	Offset int
 }
 
+// Instance of ReadBytesOpts that advances the cursor
+var advanceReadBytesOpts = &ReadBytesOpts{
+	Advance: true,
+}
+
 // ReadBytes reads from the buffer n bytes (or less if the stream reaches EOF before)
 // It returns an error in case of read error; reaching EOF does not return an error
 // Note that the returned slice is valid only until the next call to read or write into the internal buffer

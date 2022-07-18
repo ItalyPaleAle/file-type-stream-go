@@ -15,8 +15,6 @@ func GetFileType(r io.Reader) (ext string, mime string, err error) {
 }
 
 func getFileType(buf *Buffer) (ext string, mime string, err error) {
-	var equal bool
-
 	// Read the first 12 bytes to start populating the buffer
 	_, err = buf.ReadBytes(12, nil)
 	if err != nil {
@@ -48,6 +46,7 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 	}
 
 	if buf.MustNextEqual([]byte{0x25, 0x21}) {
+		var equal bool
 		if equal, err = buf.NextEqualString(" EPSF-", &ReadBytesOpts{Offset: 14}); err != nil {
 			return
 		} else if equal &&
@@ -120,7 +119,7 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 		}
 
 		// Read the amount of bytes from the header to check if we can get that much data, and advance
-		read, err = buf.ReadBytes(int(headerLen), &ReadBytesOpts{Advance: true})
+		read, err = buf.ReadBytes(int(headerLen), advanceReadBytesOpts)
 		if err != nil {
 			return
 		} else if len(read) < int(headerLen) {
@@ -217,7 +216,7 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 			filenameLength = binary.LittleEndian.Uint16(read[26:28])
 			extraFieldLength = binary.LittleEndian.Uint16(read[28:30])
 
-			read, err = buf.ReadBytes(int(filenameLength+extraFieldLength), &ReadBytesOpts{Advance: true})
+			read, err = buf.ReadBytes(int(filenameLength+extraFieldLength), advanceReadBytesOpts)
 			if err != nil {
 				return
 			}
@@ -300,7 +299,7 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 			if compressedSize == 0 {
 				nextHeaderIndex := -1
 				for nextHeaderIndex < 0 {
-					read, err = buf.ReadBytes(4000, &ReadBytesOpts{Advance: true})
+					read, err = buf.ReadBytes(4000, advanceReadBytesOpts)
 					if err != nil || (len(read) == 0 && buf.eof) {
 						return
 					}
@@ -743,6 +742,294 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 		return
 	}
 
+	if buf.MustNextEqualString("!<arch>") {
+		var read []byte
+		read, err = buf.ReadBytes(13, &ReadBytesOpts{Offset: 8})
+		if err != nil {
+			return
+		}
+		if string(read) == "debian-binary" {
+			ext = "deb"
+			mime = "application/x-deb"
+			return
+		}
+		ext = "ar"
+		mime = "application/x-unix-archive"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+		// APNG format (https://wiki.mozilla.org/APNG_Specification)
+		// 1. Find the first IDAT (image data) chunk (49 44 41 54)
+		// 2. Check if there is an "acTL" chunk before the IDAT one (61 63 54 4C)
+
+		// Offset calculated as follows:
+		// - 8 bytes: PNG signature
+		// - 4 (length) + 4 (chunk type) + 13 (chunk data) + 4 (CRC): IHDR chunk
+
+		buf.Skip(8) // ignore PNG signature
+		var (
+			length uint32
+			read   []byte
+		)
+		for {
+			read, err = buf.ReadBytes(8, advanceReadBytesOpts)
+			if err != nil {
+				return
+			}
+			if len(read) < 8 || buf.eof {
+				break // Reached EOF
+			}
+
+			length = binary.BigEndian.Uint32(read[0:4])
+			if length < 0 || length > math.MaxInt32 {
+				return // Invalid chunk length
+			}
+
+			switch string(read[4:8]) {
+			case "IDAT":
+				ext = "png"
+				mime = "image/png"
+				return
+			case "acTL":
+				ext = "apng"
+				mime = "image/apng"
+				return
+			}
+
+			buf.Skip(int(length + 4)) // Ignore chunk-data + CRC
+		}
+
+		ext = "png"
+		mime = "image/png"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x67, 0x6C, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00}) {
+		ext = "glb"
+		mime = "model/gltf-binary"
+		return
+	}
+
+	// `mov` format variants
+	if buf.MustNextEqual([]byte{0x66, 0x72, 0x65, 0x65}, &ReadBytesOpts{Offset: 4}) || // `free`
+		buf.MustNextEqual([]byte{0x6D, 0x64, 0x61, 0x74}, &ReadBytesOpts{Offset: 4}) || // `mdat` MJPEG
+		buf.MustNextEqual([]byte{0x6D, 0x6F, 0x6F, 0x76}, &ReadBytesOpts{Offset: 4}) || // `moov`
+		buf.MustNextEqual([]byte{0x77, 0x69, 0x64, 0x65}, &ReadBytesOpts{Offset: 4}) { // `wide`
+		ext = "mov"
+		mime = "video/quicktime"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0xEF, 0xBB, 0xBF}) && // UTF-8BOM
+		buf.MustNextEqualString("<?xml", &ReadBytesOpts{Offset: 3}) {
+		ext = "xml"
+		mime = "application/xml"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x49, 0x49, 0x52, 0x4F, 0x08, 0x00, 0x00, 0x00, 0x18}) {
+		ext = "orf"
+		mime = "image/x-olympus-orf"
+		return
+	}
+
+	if buf.MustNextEqualString("gimp xcf ") {
+		ext = "xcf"
+		mime = "image/x-xcf"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x49, 0x49, 0x55, 0x00, 0x18, 0x00, 0x00, 0x00, 0x88, 0xE7, 0x74, 0xD8}) {
+		ext = "rw2"
+		mime = "image/x-panasonic-rw2"
+		return
+	}
+
+	// ASF_Header_Object first 80 bytes
+	if buf.MustNextEqual([]byte{0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9}) {
+		buf.Skip(30)
+
+		// Search for header should be in first 1KB of file.
+		var (
+			read []byte
+			size uint64
+		)
+		for !buf.eof && buf.cur < 1024 {
+			read, err = buf.ReadBytes(24, advanceReadBytesOpts)
+			if err != nil {
+				return
+			}
+			if len(read) < 24 {
+				break // EOF
+			}
+
+			size = binary.LittleEndian.Uint64(read[16:24])
+			if size == 0 || size > math.MaxInt32 {
+				break
+			}
+
+			if bytes.Equal(read[0:16], []byte{0x91, 0x07, 0xDC, 0xB7, 0xB7, 0xA9, 0xCF, 0x11, 0x8E, 0xE6, 0x00, 0xC0, 0x0C, 0x20, 0x53, 0x65}) {
+				// Sync on Stream-Properties-Object (B7DC0791-A9B7-11CF-8EE6-00C00C205365)
+				read, err = buf.ReadBytes(16, advanceReadBytesOpts)
+				if err != nil {
+					return
+				}
+
+				if bytes.Equal(read, []byte{0x40, 0x9E, 0x69, 0xF8, 0x4D, 0x5B, 0xCF, 0x11, 0xA8, 0xFD, 0x00, 0x80, 0x5F, 0x5C, 0x44, 0x2B}) {
+					// Found audio:
+					ext = "asf"
+					mime = "audio/x-ms-asf"
+					return
+				}
+
+				if bytes.Equal(read, []byte{0xC0, 0xEF, 0x19, 0xBC, 0x4D, 0x5B, 0xCF, 0x11, 0xA8, 0xFD, 0x00, 0x80, 0x5F, 0x5C, 0x44, 0x2B}) {
+					// Found video:
+					ext = "asf"
+					mime = "video/x-ms-asf"
+					return
+				}
+
+				break
+			}
+
+			buf.Skip(int(size) - 24)
+		}
+
+		// Default to ASF generic extension
+		ext = "asf"
+		mime = "application/vnd.ms-asf"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A}) {
+		ext = "ktx"
+		mime = "image/ktx"
+		return
+	}
+
+	if ((buf.MustNextEqual([]byte{0x7E, 0x10, 0x04}) || buf.MustNextEqual([]byte{0x7E, 0x18, 0x04})) &&
+		buf.MustNextEqual([]byte{0x30, 0x4D, 0x49, 0x45}, &ReadBytesOpts{Offset: 4})) {
+		ext = "mie"
+		mime = "application/x-mie"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x27, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, &ReadBytesOpts{Offset: 2}) {
+		ext = "shp"
+		mime = "application/x-esri-shape"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A}) {
+		// JPEG-2000 family
+		var read []byte
+		read, err = buf.ReadBytes(4, &ReadBytesOpts{Offset: 20})
+		if err != nil {
+			return
+		}
+		switch string(read) {
+		case "jp2 ":
+			ext = "jp2"
+			mime = "image/jp2"
+		case "jpx ":
+			ext = "jpx"
+			mime = "image/jpx"
+		case "jpm ":
+			ext = "jpm"
+			mime = "image/jpm"
+		case "mjp2":
+			ext = "mj2"
+			mime = "image/mj2"
+		default:
+			return
+		}
+	}
+
+	if buf.MustNextEqual([]byte{0xFF, 0x0A}) ||
+		buf.MustNextEqual([]byte{0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A}) {
+		ext = "jxl"
+		mime = "image/jxl"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0xFE, 0xFF, 0, 60, 0, 63, 0, 120, 0, 109, 0, 108}) || // UTF-16-BOM-LE
+		buf.MustNextEqual([]byte{0xFF, 0xFE, 60, 0, 63, 0, 120, 0, 109, 0, 108, 0}) { // UTF-16-BOM-LE
+		ext = "xml"
+		mime = "application/xml"
+		return
+	}
+
+	// -- Unsafe signatures --
+
+	if buf.MustNextEqual([]byte{0x0, 0x0, 0x1, 0xBA}) || buf.MustNextEqual([]byte{0x0, 0x0, 0x1, 0xB3}) {
+		ext = "mpg"
+		mime = "video/mpeg"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x00, 0x01, 0x00, 0x00, 0x00}) {
+		ext = "ttf"
+		mime = "font/ttf"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x00, 0x00, 0x01, 0x00}) {
+		ext = "ico"
+		mime = "image/x-icon"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x00, 0x00, 0x02, 0x00}) {
+		ext = "cur"
+		mime = "image/x-icon"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}) {
+		// Detected Microsoft Compound File Binary File (MS-CFB) Format.
+		ext = "cfb"
+		mime = "application/x-cfb"
+		return
+	}
+
+	// Increase sample size from 12 to 256
+	_, err = buf.ReadBytes(256, nil)
+	if err != nil {
+		return
+	}
+
+	if buf.MustNextEqualString("BEGIN:VCARD") {
+		ext = "vcf"
+		mime = "text/vcard"
+		return
+	}
+
+	if buf.MustNextEqualString("BEGIN:VCALENDAR") {
+		ext = "ics"
+		mime = "text/calendar"
+		return
+	}
+
+	// `raf` is here just to keep all the raw image detectors together.
+	if buf.MustNextEqualString("FUJIFILMCCD-RAW") {
+		ext = "raf"
+		mime = "image/x-fujifilm-raf"
+		return
+	}
+
+	if buf.MustNextEqualString("Extended Module:") {
+		ext = "xm"
+		mime = "audio/x-xm"
+		return
+	}
+
+	if buf.MustNextEqualString("Creative Voice File") {
+		ext = "voc"
+		mime = "audio/x-voc"
+		return
+	}
+
 	/*!!!!!!!!
 
 	if buf.MustNextEqual([]byte{}) {
@@ -801,13 +1088,13 @@ func readTiffHeader(buf *Buffer, bigEndian bool) (ext string, mime string, err e
 		}
 
 		buf.Skip(int(ifdOffset))
-		read, err = buf.ReadBytes(2, &ReadBytesOpts{Advance: true})
+		read, err = buf.ReadBytes(2, advanceReadBytesOpts)
 		if err != nil || len(read) < 2 {
 			return
 		}
 		numberOfTags := bo.Uint16(read[0:2])
 		for n := uint16(0); n < numberOfTags; n++ {
-			read, err = buf.ReadBytes(2, &ReadBytesOpts{Advance: true})
+			read, err = buf.ReadBytes(2, advanceReadBytesOpts)
 			if err != nil || len(read) < 2 {
 				return
 			}
