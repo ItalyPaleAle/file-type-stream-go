@@ -518,18 +518,20 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 
 	// TIFF, little-endian type
 	if buf.MustNextEqual([]byte{0x49, 0x49}) {
-		ext, mime, err = readTiffHeader(buf, false)
+		ext, mime, err = readTiffHeader(buf, binary.LittleEndian)
 		if err != nil || (ext != "" && mime != "") {
 			return
 		}
+		buf.ResetCursor()
 	}
 
 	// TIFF, big-endian type
 	if buf.MustNextEqual([]byte{0x4D, 0x4D}) {
-		ext, mime, err = readTiffHeader(buf, true)
+		ext, mime, err = readTiffHeader(buf, binary.BigEndian)
 		if err != nil || (ext != "" && mime != "") {
 			return
 		}
+		buf.ResetCursor()
 	}
 
 	if buf.MustNextEqualString("MAC ") {
@@ -1253,19 +1255,10 @@ func tarHeaderChecksumMatches(buf *Buffer, offset int) bool {
 	return readSum == sum
 }
 
-func readTiffHeader(buf *Buffer, bigEndian bool) (ext string, mime string, err error) {
-	var bo binary.ByteOrder = binary.LittleEndian
-	if bigEndian {
-		bo = binary.BigEndian
-	}
-
-	var (
-		read []byte
-	)
-
+func readTiffHeader(buf *Buffer, bo binary.ByteOrder) (ext string, mime string, err error) {
+	var read []byte
 	read, err = buf.ReadBytes(10, &ReadBytesOpts{
-		Advance: true,
-		Offset:  2,
+		Offset: 2,
 	})
 	if err != nil || len(read) < 10 {
 		return
@@ -1276,19 +1269,18 @@ func readTiffHeader(buf *Buffer, bigEndian bool) (ext string, mime string, err e
 
 	if version == 42 {
 		// TIFF file header
-		if ifdOffset >= 6 && len(read) >= 8 {
-			if string(read[6:8]) == "CR" {
-				ext = "cr2"
-				mime = "image/x-canon-cr2"
-				return
-			}
-
-			if ifdOffset >= 8 && len(read) >= 10 &&
-				(bytes.Equal(read[6:10], []byte{0x1C, 0x00, 0xFE, 0x00}) || bytes.Equal(read[6:10], []byte{0x1F, 0x00, 0x0B, 0x00})) {
-				ext = "nef"
-				mime = "image/x-nikon-nef"
-				return
-			}
+		if ifdOffset >= 6 && len(read) >= 8 &&
+			string(read[6:8]) == "CR" {
+			ext = "cr2"
+			mime = "image/x-canon-cr2"
+			return
+		}
+		if ifdOffset >= 8 && len(read) >= 10 &&
+			(bytes.Equal(read[6:10], []byte{0x1C, 0x00, 0xFE, 0x00}) ||
+				bytes.Equal(read[6:10], []byte{0x1F, 0x00, 0x0B, 0x00})) {
+			ext = "nef"
+			mime = "image/x-nikon-nef"
+			return
 		}
 
 		buf.Skip(int(ifdOffset))
