@@ -3,7 +3,7 @@ package filetype
 import (
 	"encoding/binary"
 	"fmt"
-	"unsafe"
+	"reflect"
 )
 
 // ReadBinaryOpts contains options for methods that return numbers
@@ -32,7 +32,7 @@ func GetUint[T uintSizes](buf *Buffer, dst *T, opts ...*ReadBinaryOpts) error {
 		bo = o.ByteOrder
 	}
 
-	size := unsafe.Sizeof(dst)
+	size := reflect.ValueOf(dst).Elem().Type().Size()
 
 	read, err := buf.ReadBytes(int(size), o.ReadBytesOpts)
 	if err != nil {
@@ -43,13 +43,13 @@ func GetUint[T uintSizes](buf *Buffer, dst *T, opts ...*ReadBinaryOpts) error {
 
 	var res any
 	switch size {
-	case 8:
+	case 1:
 		res = uint8(read[0])
-	case 16:
+	case 2:
 		res = bo.Uint16(read[0:2])
-	case 32:
+	case 4:
 		res = bo.Uint32(read[0:4])
-	case 64:
+	case 8:
 		res = bo.Uint64(read[0:8])
 	}
 

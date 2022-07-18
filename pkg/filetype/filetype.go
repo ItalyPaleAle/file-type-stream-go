@@ -3,9 +3,11 @@ package filetype
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -932,15 +934,19 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 		case "jp2 ":
 			ext = "jp2"
 			mime = "image/jp2"
+			return
 		case "jpx ":
 			ext = "jpx"
 			mime = "image/jpx"
+			return
 		case "jpm ":
 			ext = "jpm"
 			mime = "image/jpm"
+			return
 		case "mjp2":
 			ext = "mj2"
 			mime = "image/mj2"
+			return
 		default:
 			return
 		}
@@ -1030,6 +1036,168 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 		return
 	}
 
+	if buf.MustNextEqual([]byte{0x04, 0x00, 0x00, 0x00}) && buf.buf.Len() >= 16 { // Rough & quick check Pickle/ASAR
+		var jsonSize uint32
+		err = GetUint(buf, &jsonSize, &ReadBinaryOpts{
+			ByteOrder: binary.LittleEndian,
+			ReadBytesOpts: &ReadBytesOpts{
+				Advance: true,
+				Offset:  12,
+			},
+		})
+		if err != nil {
+			return
+		}
+		if jsonSize > 12 && jsonSize <= math.MaxInt32 && buf.buf.Len() >= int(jsonSize+16) {
+			var read []byte
+			read, err = buf.ReadBytes(int(jsonSize), &ReadBytesOpts{})
+			if err != nil {
+				return
+			}
+			if len(read) == int(jsonSize) {
+				var j map[string]any
+				err = json.Unmarshal(read, &j)
+				// Check if Pickle is ASAR
+				if err == nil {
+					if _, ok := j["files"]; ok { // Final check, assuring Pickle/ASAR format
+						ext = "asar"
+						mime = "application/x-asar"
+						return
+					}
+				}
+			}
+		}
+	}
+
+	if buf.MustNextEqual([]byte{0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01, 0x01, 0x0D, 0x01, 0x02, 0x01, 0x01, 0x02}) {
+		ext = "mxf"
+		mime = "application/mxf"
+		return
+	}
+
+	if buf.MustNextEqualString("SCRM", &ReadBytesOpts{Offset: 44}) {
+		ext = "s3m"
+		mime = "audio/x-s3m"
+		return
+	}
+
+	// Raw MPEG-2 transport stream (188-byte packets)
+	if buf.MustNextEqual([]byte{0x47}) && buf.MustNextEqual([]byte{0x47}, &ReadBytesOpts{Offset: 188}) {
+		ext = "mts"
+		mime = "video/mp2t"
+		return
+	}
+
+	// Blu-ray Disc Audio-Video (BDAV) MPEG-2 transport stream has 4-byte TP_extra_header before each 188-byte packet
+	if buf.MustNextEqual([]byte{0x47}, &ReadBytesOpts{Offset: 4}) && buf.MustNextEqual([]byte{0x47}, &ReadBytesOpts{Offset: 196}) {
+		ext = "mts"
+		mime = "video/mp2t"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x42, 0x4F, 0x4F, 0x4B, 0x4D, 0x4F, 0x42, 0x49}, &ReadBytesOpts{Offset: 60}) {
+		ext = "mobi"
+		mime = "application/x-mobipocket-ebook"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x44, 0x49, 0x43, 0x4D}, &ReadBytesOpts{Offset: 128}) {
+		ext = "dcm"
+		mime = "application/dicom"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x4C, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}) {
+		ext = "lnk"
+		mime = "application/x.ms.shortcut" // Invented by us
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x62, 0x6F, 0x6F, 0x6B, 0x00, 0x00, 0x00, 0x00, 0x6D, 0x61, 0x72, 0x6B, 0x00, 0x00, 0x00, 0x00}) {
+		ext = "alias"
+		mime = "application/x.apple.alias" // Invented by us
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x4C, 0x50}, &ReadBytesOpts{Offset: 34}) &&
+		(buf.MustNextEqual([]byte{0x00, 0x00, 0x01}, &ReadBytesOpts{Offset: 8}) ||
+			buf.MustNextEqual([]byte{0x01, 0x00, 0x02}, &ReadBytesOpts{Offset: 8}) ||
+			buf.MustNextEqual([]byte{0x02, 0x00, 0x02}, &ReadBytesOpts{Offset: 8})) {
+		ext = "eot"
+		mime = "application/vnd.ms-fontobject"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x06, 0x06, 0xED, 0xF5, 0xD8, 0x1D, 0x46, 0xE5, 0xBD, 0x31, 0xEF, 0xE7, 0xFE, 0x74, 0xB7, 0x1D}) {
+		ext = "indd"
+		mime = "application/x-indesign"
+		return
+	}
+
+	// Increase sample size from 256 to 512
+	_, err = buf.ReadBytes(512, nil)
+	if err != nil {
+		return
+	}
+
+	// Requires a buffer size of 512 bytes
+	if tarHeaderChecksumMatches(buf, 0) {
+		ext = "tar"
+		mime = "application/x-tar"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0xFF, 0xFE, 0xFF, 0x0E, 0x53, 0x00, 0x6B, 0x00, 0x65, 0x00, 0x74, 0x00, 0x63, 0x00, 0x68, 0x00, 0x55, 0x00, 0x70, 0x00, 0x20, 0x00, 0x4D, 0x00, 0x6F, 0x00, 0x64, 0x00, 0x65, 0x00, 0x6C, 0x00}) {
+		ext = "skp"
+		mime = "application/vnd.sketchup.skp"
+		return
+	}
+
+	if buf.MustNextEqualString("-----BEGIN PGP MESSAGE-----") {
+		ext = "pgp"
+		mime = "application/pgp-encrypted"
+		return
+	}
+
+	// Check MPEG 1 or 2 Layer 3 header, or 'layer 0' for ADTS (MPEG sync-word 0xFFE)
+	if buf.MustNextEqualWithMask([]byte{0xFF, 0xE0}, []byte{0xFF, 0xE0}) {
+		if buf.MustNextEqualWithMask([]byte{0x10}, []byte{0x16}, &ReadBytesOpts{Offset: 1}) {
+			// Check for (ADTS) MPEG-2
+			if buf.MustNextEqualWithMask([]byte{0x08}, []byte{0x08}, &ReadBytesOpts{Offset: 1}) {
+				ext = "aac"
+				mime = "audio/aac"
+				return
+			}
+
+			// Must be (ADTS) MPEG-4
+			ext = "aac"
+			mime = "audio/aac"
+			return
+		}
+
+		// MPEG 1 or 2 Layer 3 header
+		// Check for MPEG layer 3
+		if buf.MustNextEqualWithMask([]byte{0x02}, []byte{0x06}, &ReadBytesOpts{Offset: 1}) {
+			ext = "mp3"
+			mime = "audio/mpeg"
+			return
+		}
+
+		// Check for MPEG layer 2
+		if buf.MustNextEqualWithMask([]byte{0x04}, []byte{0x06}, &ReadBytesOpts{Offset: 1}) {
+			ext = "mp2"
+			mime = "audio/mpeg"
+			return
+		}
+
+		// Check for MPEG layer 1
+		if buf.MustNextEqualWithMask([]byte{0x06}, []byte{0x06}, &ReadBytesOpts{Offset: 1}) {
+			ext = "mp1"
+			mime = "audio/mpeg"
+			return
+		}
+	}
+
 	/*!!!!!!!!
 
 	if buf.MustNextEqual([]byte{}) {
@@ -1047,6 +1215,42 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 	/*!!!!!!!!*/
 
 	return
+}
+
+func tarHeaderChecksumMatches(buf *Buffer, offset int) bool {
+	// Requires a 512-byte buffer
+	read, err := buf.ReadBytes(512, &ReadBytesOpts{Offset: offset})
+	if err != nil || len(read) < 512 {
+		return false
+	}
+
+	// Read sum in header
+	start := 148
+	end := 154
+	idx := bytes.IndexByte(read[start:end], 0x00)
+	if idx > -1 {
+		end = start + idx
+	}
+	readSum, err := strconv.ParseUint(
+		strings.TrimSpace(string(read[start:end])),
+		8, 64,
+	)
+	if err != nil {
+		return false
+	}
+
+	// Initialize signed bit sum
+	var sum uint64 = 8 * 0x20
+
+	for i := offset; i < offset+148; i++ {
+		sum += uint64(read[i])
+	}
+
+	for i := offset + 156; i < offset+512; i++ {
+		sum += uint64(read[i])
+	}
+
+	return readSum == sum
 }
 
 func readTiffHeader(buf *Buffer, bigEndian bool) (ext string, mime string, err error) {
