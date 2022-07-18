@@ -3,6 +3,7 @@ package filetype
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"math"
 	"strings"
@@ -538,65 +539,208 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 
 	// https://github.com/threatstack/libmagic/blob/master/magic/Magdir/matroska
 	if buf.MustNextEqual([]byte{0x1A, 0x45, 0xDF, 0xA3}) { // Root element: EBML
-		/*async function readField() {
-			const msb = await tokenizer.peekNumber(Token.UINT8);
-			let mask = 0x80;
-			let ic = 0; // 0 = A, 1 = B, 2 = C, 3
-			// = D
-
-			while ((msb & mask) === 0) {
-				++ic;
-				mask >>= 1;
-			}
-
-			const id = Buffer.alloc(ic + 1);
-			await tokenizer.readBuffer(id);
-			return id;
+		var l uint64
+		_, l, err = readMkvElement(buf)
+		if err != nil {
+			return
+		}
+		var docType []byte
+		docType, err = readMkvChildren(buf, l)
+		if err != nil {
+			return
 		}
 
-		async function readElement() {
-			const id = await readField();
-			const lengthField = await readField();
-			lengthField[0] ^= 0x80 >> (lengthField.length - 1);
-			const nrLength = Math.min(6, lengthField.length); // JavaScript can max read 6 bytes integer
-			return {
-				id: id.readUIntBE(0, id.length),
-				len: lengthField.readUIntBE(lengthField.length - nrLength, nrLength),
-			};
+		switch string(docType) {
+		case "webm":
+			ext = "webm"
+			mime = "video/webm"
+			return
+
+		case "matroska":
+			ext = "mkv"
+			mime = "video/x-matroska"
+			return
+
+		default:
+			return
+		}
+	}
+
+	// RIFF file format which might be AVI, WAV, QCP, etc
+	if buf.MustNextEqual([]byte{0x52, 0x49, 0x46, 0x46}) {
+		if buf.MustNextEqual([]byte{0x41, 0x56, 0x49}, &ReadBytesOpts{Offset: 8}) {
+			ext = "avi"
+			mime = "video/vnd.avi"
+			return
 		}
 
-		async function readChildren(level, children) {
-			while (children > 0) {
-				const element = await readElement();
-				if (element.id === 0x42_82) {
-					const rawValue = await tokenizer.readToken(new Token.StringType(element.len, 'utf-8'));
-					return rawValue.replace(/\00.*$/g, ''); // Return DocType
-				}
-
-				await tokenizer.ignore(element.len); // ignore payload
-				--children;
-			}
+		if buf.MustNextEqual([]byte{0x57, 0x41, 0x56, 0x45}, &ReadBytesOpts{Offset: 8}) {
+			ext = "wav"
+			mime = "audio/vnd.wave"
+			return
 		}
 
-		const re = await readElement();
-		const docType = await readChildren(1, re.len);
+		// QLCM, QCP file
+		if buf.MustNextEqual([]byte{0x51, 0x4C, 0x43, 0x4D}, &ReadBytesOpts{Offset: 8}) {
+			ext = "qcp"
+			mime = "audio/qcelp"
+			return
+		}
+	}
 
-		switch (docType) {
-			case 'webm':
-				return {
-					ext: 'webm',
-					mime: 'video/webm',
-				};
+	if buf.MustNextEqualString("SQLi") {
+		ext = "sqlite"
+		mime = "application/x-sqlite3"
+		return
+	}
 
-			case 'matroska':
-				return {
-					ext: 'mkv',
-					mime: 'video/x-matroska',
-				};
+	if buf.MustNextEqual([]byte{0x4E, 0x45, 0x53, 0x1A}) {
+		ext = "nes"
+		mime = "application/x-nintendo-nes-rom"
+		return
+	}
 
-			default:
-				return;
-		}*/
+	if buf.MustNextEqualString("Cr24") {
+		ext = "crx"
+		mime = "application/x-google-chrome-extension"
+		return
+	}
+
+	if buf.MustNextEqualString("MSCF") || buf.MustNextEqualString("ISc(") {
+		ext = "cab"
+		mime = "application/vnd.ms-cab-compressed"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0xED, 0xAB, 0xEE, 0xDB}) {
+		ext = "rpm"
+		mime = "application/x-rpm"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0xC5, 0xD0, 0xD3, 0xC6}) {
+		ext = "eps"
+		mime = "application/eps"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x28, 0xB5, 0x2F, 0xFD}) {
+		ext = "zst"
+		mime = "application/zstd"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x7F, 0x45, 0x4C, 0x46}) {
+		ext = "elf"
+		mime = "application/x-elf"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x4F, 0x54, 0x54, 0x4F, 0x00}) {
+		ext = "otf"
+		mime = "font/otf"
+		return
+	}
+
+	if buf.MustNextEqualString("#!AMR") {
+		ext = "amr"
+		mime = "audio/amr"
+		return
+	}
+
+	if buf.MustNextEqualString("{\\rtf") {
+		ext = "rtf"
+		mime = "application/rtf"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x46, 0x4C, 0x56, 0x01}) {
+		ext = "flv"
+		mime = "video/x-flv"
+		return
+	}
+
+	if buf.MustNextEqualString("IMPM") {
+		ext = "it"
+		mime = "audio/x-it"
+		return
+	}
+
+	if buf.MustNextEqualString("-lh0-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lh1-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lh2-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lh3-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lh4-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lh5-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lh6-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lh7-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lzs-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lz4-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lz5-", &ReadBytesOpts{Offset: 2}) ||
+		buf.MustNextEqualString("-lhd-", &ReadBytesOpts{Offset: 2}) {
+		ext = "lzh"
+		mime = "application/x-lzh-compressed"
+		return
+	}
+
+	// MPEG program stream (PS or MPEG-PS)
+	if buf.MustNextEqual([]byte{0x00, 0x00, 0x01, 0xBA}) {
+		//  MPEG-PS, MPEG-1 Part 1
+		if buf.MustNextEqualWithMask([]byte{0x21}, []byte{0xF1}, &ReadBytesOpts{Offset: 4}) {
+			ext = "mpg" // May also be .ps, .mpeg
+			mime = "video/MP1S"
+			return
+		}
+
+		// MPEG-PS, MPEG-2 Part 1
+		if buf.MustNextEqualWithMask([]byte{0x44}, []byte{0xC4}, &ReadBytesOpts{Offset: 4}) {
+			ext = "mpg" // May also be .mpg, .m2p, .vob or .sub
+			mime = "video/MP2P"
+			return
+		}
+	}
+
+	if buf.MustNextEqualString("ITSF") {
+		ext = "chm"
+		mime = "application/vnd.ms-htmlhelp"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}) {
+		ext = "xz"
+		mime = "application/x-xz"
+		return
+	}
+
+	if buf.MustNextEqualString("<?xml ") {
+		ext = "xml"
+		mime = "application/xml"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C}) {
+		ext = "7z"
+		mime = "application/x-7z-compressed"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00}) ||
+		buf.MustNextEqual([]byte{0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01}) {
+		ext = "rar"
+		mime = "application/x-rar-compressed"
+		return
+	}
+
+	if buf.MustNextEqualString("solid ") {
+		ext = "stl"
+		mime = "model/stl"
+		return
+	}
+
+	if buf.MustNextEqualString("BLENDER") {
+		ext = "blend"
+		mime = "application/x-blender"
+		return
 	}
 
 	/*!!!!!!!!
@@ -606,6 +750,7 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 		mime = ""
 		return
 	}
+
 	if buf.MustNextEqualString("") {
 		ext = ""
 		mime = ""
@@ -690,6 +835,89 @@ func readTiffHeader(buf *Buffer, bigEndian bool) (ext string, mime string, err e
 		ext = "tif"
 		mime = "image/tiff"
 		return
+	}
+
+	return
+}
+
+func readMkvField(buf *Buffer) (id []byte, err error) {
+	var msb uint8
+	err = GetUint(buf, &msb)
+	if err != nil {
+		return
+	}
+	var mask uint8 = 0x80
+	var ic uint8 = 0 // 0 = A, 1 = B, 2 = C, 3 = D
+
+	for ((msb & mask) == 0) && mask != 0 {
+		ic++
+		mask >>= 1
+	}
+
+	id, err = buf.ReadBytes(int(ic+1), &ReadBytesOpts{
+		Advance: true,
+	})
+	return
+}
+
+func readMkvElement(buf *Buffer) (id uint64, l uint64, err error) {
+	var idBytes []byte
+	idBytes, err = readMkvField(buf)
+	if err != nil {
+		return
+	}
+	if len(idBytes) > 8 {
+		err = errors.New("invalid idBytes length: greater than 8")
+	}
+
+	var lengthField []byte
+	lengthField, err = readMkvField(buf)
+	if err != nil {
+		return
+	}
+	if len(lengthField) > 8 {
+		err = errors.New("invalid lengthField length: greater than 8")
+	}
+
+	lengthField[0] ^= 0x80 >> (len(lengthField) - 1)
+	id = bytesToUintBE(idBytes, binary.BigEndian)
+	l = bytesToUintBE(lengthField, binary.BigEndian)
+
+	return
+}
+
+func readMkvChildren(buf *Buffer, children uint64) (rawValue []byte, err error) {
+	var (
+		id uint64
+		l  uint64
+	)
+	for children > 0 {
+		id, l, err = readMkvElement(buf)
+		if err != nil {
+			return
+		}
+		if l > math.MaxInt32 {
+			err = errors.New("length is beyond int32 boundary")
+			return
+		}
+		if id == 0x42_82 {
+			rawValue, err = buf.ReadBytes(int(l), &ReadBytesOpts{
+				Advance: true,
+			})
+			if err != nil {
+				return
+			}
+
+			// Return DocType
+			idx := bytes.IndexByte(rawValue, 0x00)
+			if idx > -1 {
+				rawValue = rawValue[0:idx]
+			}
+			return
+		}
+
+		buf.Skip(int(l)) // ignore payload
+		children--
 	}
 
 	return

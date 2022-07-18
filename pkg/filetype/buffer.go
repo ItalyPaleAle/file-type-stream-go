@@ -121,6 +121,41 @@ func (b *Buffer) MustNextEqualString(check string, opts ...*ReadBytesOpts) bool 
 	return res && err == nil
 }
 
+// NextEqualWithMask is a variant of NextEqual that applies a mask when checking for equality
+// Note that while opts is variadic, at most one element will be read
+func (b *Buffer) NextEqualWithMask(check []byte, mask []byte, opts ...*ReadBytesOpts) (bool, error) {
+	if len(check) == 0 {
+		return false, errors.New("parameter check is empty")
+	}
+	var (
+		read []byte
+		err  error
+	)
+	if len(opts) > 0 {
+		read, err = b.ReadBytes(len(check), opts[0])
+	} else {
+		read, err = b.ReadBytes(len(check), nil)
+	}
+	if err != nil {
+		return false, err
+	}
+
+	i := 0
+	for i < len(read) && i < len(mask) {
+		read[i] = read[i] & mask[i]
+		i++
+	}
+
+	return bytes.Equal(read, check), nil
+}
+
+// MustNextEqualWithMask is like NextEqualWithMask but does not return errors
+// It returns false in case of any error
+func (b *Buffer) MustNextEqualWithMask(check []byte, mask []byte, opts ...*ReadBytesOpts) bool {
+	res, err := b.NextEqualWithMask(check, mask, opts...)
+	return res && err == nil
+}
+
 // Skip advances the current cursor by n bytes
 func (b *Buffer) Skip(n int) {
 	b.cur += n
