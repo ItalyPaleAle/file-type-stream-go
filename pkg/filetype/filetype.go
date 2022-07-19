@@ -103,19 +103,17 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 	if buf.MustNextEqualString("ID3") {
 		// Read the header length
 		var read []byte
-		read, err = buf.ReadBytes(4, &ReadBytesOpts{
-			Advance: true,
-			// Skip ID3 header until the header size
-			Offset: 6,
-		})
+		// Skip ID3 header until the header size
+		buf.Skip(6)
+		read, err = buf.ReadBytes(4, nil)
 		if err != nil {
 			return
 		} else if len(read) != 4 {
 			// Undetermined file type
 			return
 		}
-		headerLen := parseID3SyncSafeUint32([4]byte{read[0], read[1], read[2], read[3]})
-		if headerLen > math.MaxInt32 {
+		headerLen := parseID3SyncSafeUint32(read[0:4])
+		if headerLen < 4 || headerLen > math.MaxInt32 {
 			// Undetermined file type
 			return
 		}
@@ -124,9 +122,11 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 		read, err = buf.ReadBytes(int(headerLen), advanceReadBytesOpts)
 		if err != nil {
 			return
-		} else if len(read) < int(headerLen) {
+		} else if len(read) < int(headerLen) || buf.eof {
 			// We reached EOF before we could read the entire header
-			// Undetermined file type
+			// Guess file type based on ID3 header for backward compatibility
+			ext = "mp3"
+			mime = "audio/mpeg"
 			return
 		}
 
@@ -216,16 +216,15 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 			filenameLength = binary.LittleEndian.Uint16(read[26:28])
 			extraFieldLength = binary.LittleEndian.Uint16(read[28:30])
 
-			read, err = buf.ReadBytes(int(filenameLength+extraFieldLength), advanceReadBytesOpts)
+			read, err = buf.ReadBytes(int(filenameLength), advanceReadBytesOpts)
 			if err != nil {
 				return
 			}
-
 			if int(filenameLength) > len(read) {
 				break
 			}
-
-			filename = string(read[:filenameLength])
+			filename = string(read)
+			buf.Skip(int(extraFieldLength))
 
 			// Assumes signed `.xpi` from addons.mozilla.org
 			if filename == "META-INF/mozilla.rsa" {
@@ -311,7 +310,7 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 						break
 					}
 					nextHeaderIndex = bytes.Index(read, []byte{0x50, 0x4B, 0x03, 0x04})
-					if nextHeaderIndex > 0 {
+					if nextHeaderIndex > -1 {
 						buf.Skip(nextHeaderIndex)
 					} else {
 						buf.Skip(len(read))

@@ -74,10 +74,12 @@ func bytesToUintBE(b []byte, bo binary.ByteOrder) uint64 {
 }
 
 // Parses a sequence of 4 bytes into an ID3 "uint32 sync-safe integer"
-// See also https://stackoverflow.com/a/7913100/192024
-func parseID3SyncSafeUint32(b [4]byte) uint32 {
-	return uint32(b[3]&0x7F) |
-		uint32((b[2]&0x7F)>>1) |
-		uint32((b[1]&0x7F)>>2) |
-		uint32((b[0]&0x7F)>>3)
+func parseID3SyncSafeUint32(b []byte) uint32 {
+	if len(b) != 4 {
+		return 0
+	}
+	return uint32(b[0])<<21 |
+		uint32(b[1])<<14 |
+		uint32(b[2])<<7 |
+		uint32(b[3])
 }
