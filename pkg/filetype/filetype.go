@@ -330,6 +330,76 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 		return
 	}
 
+	if buf.MustNextEqualString("OggS") {
+		// This is an OGG container
+		var read []byte
+		read, err = buf.ReadBytes(8, &ReadBytesOpts{Offset: 28})
+		if err != nil {
+			return
+		}
+
+		// Needs to be before `ogg` check
+		if bytes.HasPrefix(read, []byte{0x4F, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64}) {
+			ext = "opus"
+			mime = "audio/opus"
+			return
+		}
+
+		// If ' theora' in header.
+		if bytes.HasPrefix(read, []byte{0x80, 0x74, 0x68, 0x65, 0x6F, 0x72, 0x61}) {
+			ext = "ogv"
+			mime = "video/ogg"
+			return
+		}
+
+		// If '\x01video' in header.
+		if bytes.HasPrefix(read, []byte{0x01, 0x76, 0x69, 0x64, 0x65, 0x6F, 0x00}) {
+			ext = "ogm"
+			mime = "video/ogg"
+			return
+		}
+
+		// If ' FLAC' in header  https://xiph.org/flac/faq.html
+		if bytes.HasPrefix(read, []byte{0x7F, 0x46, 0x4C, 0x41, 0x43}) {
+			ext = "oga"
+			mime = "audio/ogg"
+			return
+		}
+
+		// 'Speex  ' in header https://en.wikipedia.org/wiki/Speex
+		if bytes.HasPrefix(read, []byte{0x53, 0x70, 0x65, 0x65, 0x78, 0x20, 0x20}) {
+			ext = "spx"
+			mime = "audio/ogg"
+			return
+		}
+
+		// If '\x01vorbis' in header
+		if bytes.HasPrefix(read, []byte{0x01, 0x76, 0x6F, 0x72, 0x62, 0x69, 0x73}) {
+			ext = "ogg"
+			mime = "audio/ogg"
+			return
+		}
+
+		// Default OGG container https://www.iana.org/assignments/media-types/application/ogg
+		ext = "ogx"
+		mime = "application/ogg"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x50, 0x4B}) {
+		var read []byte
+		read, err = buf.ReadBytes(2, nil)
+		if err != nil {
+			return
+		}
+		if (read[0] == 0x3 || read[0] == 0x5 || read[0] == 0x7) &&
+			(read[1] == 0x4 || read[1] == 0x6 || read[1] == 0x8) {
+			ext = "zip"
+			mime = "application/zip"
+			return
+		}
+	}
+
 	// File Type Box (https://en.wikipedia.org/wiki/ISO_base_media_file_format)
 	// It's not required to be first, but it's recommended to be. Almost all ISO base media files start with `ftyp` box.
 	if buf.MustNextEqualString("ftyp", &ReadBytesOpts{Offset: 4}) {
@@ -810,6 +880,12 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 
 		ext = "png"
 		mime = "image/png"
+		return
+	}
+
+	if buf.MustNextEqual([]byte{0x41, 0x52, 0x52, 0x4F, 0x57, 0x31, 0x00, 0x00}) {
+		ext = "arrow"
+		mime = "application/x-apache-arrow"
 		return
 	}
 
