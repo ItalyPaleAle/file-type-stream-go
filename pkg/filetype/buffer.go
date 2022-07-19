@@ -145,13 +145,19 @@ func (b *Buffer) NextEqualWithMask(check []byte, mask []byte, opts ...*ReadBytes
 		return false, err
 	}
 
-	i := 0
-	for i < len(read) && i < len(mask) {
-		read[i] = read[i] & mask[i]
-		i++
+	if len(read) != len(check) {
+		return false, nil
 	}
 
-	return bytes.Equal(read, check), nil
+	maskLen := len(mask)
+	for i := 0; i < len(read); i++ {
+		if i > maskLen && read[i] != check[i] {
+			return false, nil
+		} else if (read[i] & mask[i]) != check[i] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // MustNextEqualWithMask is like NextEqualWithMask but does not return errors

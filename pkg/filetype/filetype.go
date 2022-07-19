@@ -101,11 +101,9 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 	}
 
 	if buf.MustNextEqualString("ID3") {
-		// Read the header length
-		var read []byte
 		// Skip ID3 header until the header size
-		buf.Skip(6)
-		read, err = buf.ReadBytes(4, nil)
+		var read []byte
+		read, err = buf.ReadBytes(4, &ReadBytesOpts{Offset: 6, Advance: true})
 		if err != nil {
 			return
 		} else if len(read) != 4 {
