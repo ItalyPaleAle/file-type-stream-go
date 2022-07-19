@@ -194,16 +194,13 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 			filename         string
 		)
 		for {
-			if buf.eof {
-				break
-			}
 			read, err = buf.ReadBytes(30, &ReadBytesOpts{
 				Advance: true,
 			})
 			if err != nil {
 				return
 			}
-			if len(read) < 30 {
+			if len(read) < 30 && buf.eof {
 				// We reached EOF
 				break
 			}
@@ -411,14 +408,13 @@ func getFileType(buf *Buffer) (ext string, mime string, err error) {
 		if err != nil {
 			return
 		}
-		if len(read) == 4 &&
-			(read[0]&0x60 != 0) && (read[1]&0x60 != 0) &&
-			(read[2]&0x60 != 0) && (read[3]&0x60 != 0) {
-			brandMajor := string(
-				bytes.TrimSpace(
-					bytes.ReplaceAll(read, []byte{0x00}, []byte{0x20}),
-				),
-			)
+		if len(read) == 4 && (read[0]&0x60 != 0) {
+			for i := 0; i < len(read); i++ {
+				if read[i]&0x60 == 0 || read[i] == 0x00 {
+					read[i] = 0x20
+				}
+			}
+			brandMajor := string(bytes.TrimSpace(read))
 			switch brandMajor {
 			case "avif", "avis":
 				ext = "avif"
