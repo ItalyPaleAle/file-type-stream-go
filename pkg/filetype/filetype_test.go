@@ -1,7 +1,6 @@
 package filetype
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -239,12 +238,7 @@ func TestGetFileType(t *testing.T) {
 			for _, f := range files {
 				filename := f + "." + ext
 				t.Run(filename, func(t *testing.T) {
-					r, err := os.Open(filepath.Join(fixturePath, filename))
-					if err != nil {
-						t.Errorf("Failed to open file '%s'. error='%v'", filename, err)
-						return
-					}
-					gotExt, _, err := GetFileType(r)
+					gotExt, _, err := ParseFile(filepath.Join(fixturePath, filename))
 					if err != nil {
 						t.Errorf("GetFileType() error='%v'", err)
 						return
