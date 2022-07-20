@@ -13,22 +13,6 @@ import (
 	"github.com/italypaleale/file-type-stream-go/pkg/filetype"
 )
 
-/*
-This sample is a web server (using Gin) that accepts uploaded images.
-Clients send images by sending a multipart/form-data POST request to `/upload`, with the image in the `file` field.
-Uploaded images are then stored on disk.
-Using the filetype package, we can reject files that are not images.
-
-To run this example, first start the server with `go run .`
-
-You can test file upload with curl:
-
-```sh
-curl -F 'file=@image.jpg' \
-	"http://localhost:8080/upload"
-```
-*/
-
 var listen = "127.0.0.1:8080"
 
 func main() {
