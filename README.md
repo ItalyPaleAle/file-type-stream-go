@@ -1,6 +1,6 @@
 # file-type-stream-go
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/ItalyPaleAle/file-type-stream-go.svg)](https://pkg.go.dev/github.com/ItalyPaleAle/file-type-stream-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/italypaleale/file-type-stream-go.svg)](https://pkg.go.dev/github.com/italypaleale/file-type-stream-go)
 
 This library is used to detect the type of a binary file by looking at ["magic numbers"](https://en.wikipedia.org/wiki/Magic_number_(programming)#Magic_numbers_in_files). It is optimized to work with streams, efficiently reading only a small number of bytes in most cases.
 
@@ -28,7 +28,7 @@ import "github.com/italypaleale/file-type-stream-go/pkg/filetype"
 
 ### APIs
 
-[Full API reference](https://pkg.go.dev/github.com/ItalyPaleAle/file-type-stream-go)
+[Full API reference](https://pkg.go.dev/github.com/italypaleale/file-type-stream-go)
 
 The main package (`github.com/italypaleale/file-type-stream-go/pkg/filetype`) contains 3 main methods:
 
