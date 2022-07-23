@@ -6,7 +6,7 @@ This library is used to detect the type of a binary file by looking at ["magic n
 
 This is a port of [sindresorhus/file-type](https://github.com/sindresorhus/file-type) to Go.
 
-> The current version of this package is based on version [17.1.2](https://github.com/sindresorhus/file-type/tree/v17.1.2) of file-type.
+> The current version of this package is based on version [17.1.3](https://github.com/sindresorhus/file-type/tree/v17.1.3) of file-type.
 
 ## Examples
 

@@ -238,7 +238,7 @@ func TestGetFileType(t *testing.T) {
 			for _, f := range files {
 				filename := f + "." + ext
 				t.Run(filename, func(t *testing.T) {
-					gotExt, _, err := ParseFile(filepath.Join(fixturePath, filename))
+					gotExt, gotMime, err := ParseFile(filepath.Join(fixturePath, filename))
 					if err != nil {
 						t.Errorf("GetFileType() error='%v'", err)
 						return
@@ -246,8 +246,35 @@ func TestGetFileType(t *testing.T) {
 					if gotExt != ext {
 						t.Errorf("GetFileType() got extension='%v', want='%v'", gotExt, ext)
 					}
+					if gotMime == "" {
+						t.Errorf("GetFileType() got mime='', want a value")
+					}
 				})
 			}
 		})
+
+		if fp, ok := falsePositives[ext]; ok && len(fp) > 0 {
+			for _, f := range fp {
+				filename := f + "." + ext
+				t.Run(filename, func(t *testing.T) {
+					gotExt, _, err := ParseFile(filepath.Join(fixturePath, filename))
+					if err != nil {
+						t.Errorf("GetFileType() error='%v'", err)
+						return
+					}
+					if gotExt != "" {
+						t.Errorf("GetFileType() got extension='%v', want=''", gotExt)
+					}
+				})
+			}
+		}
 	}
+
+	t.Run("corrupt MKV", func(t *testing.T) {
+		_, _, err := ParseFile(filepath.Join(fixturePath, "fixture-corrupt.mkv"))
+		if err == nil {
+			t.Errorf("GetFileType() did not return an error")
+			return
+		}
+	})
 }
